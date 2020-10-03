@@ -104,15 +104,8 @@ def run(image=None):
     # Always start by initializing Qt (only once per application)
     warnings.filterwarnings("ignore")
     app = QtGui.QApplication(sys.argv)
-    icon_path = pathlib.Path.home().joinpath('.cellpose', 'logo.png')
-    guip_path = pathlib.Path.home().joinpath('.cellpose', 'cellpose_gui.png')
-    if not icon_path.is_file():
-        cp_dir = pathlib.Path.home().joinpath('.cellpose')
-        cp_dir.mkdir(exist_ok=True)
-        print('downloading logo')
-        utils.download_url_to_file('http://www.cellpose.org/static/images/cellpose_transparent.png', icon_path, progress=True)
-    if not guip_path.is_file():
-        utils.download_url_to_file('https://github.com/MouseLand/cellpose/raw/master/docs/_static/cellpose_gui.png', guip_path, progress=True)
+    icon_path = pathlib.Path.Path(cellpose.__path__[0]).joinpath('logo', 'logo.png')
+    guip_path = pathlib.Path.Path(cellpose.__path__[0]).joinpath('logo', 'cellpose_gui.png')
     icon_path = str(icon_path.resolve())
     app_icon = QtGui.QIcon()
     app_icon.addFile(icon_path, QtCore.QSize(16, 16))
@@ -124,7 +117,6 @@ def run(image=None):
     app.setWindowIcon(app_icon)
     os.environ['MXNET_CUDNN_AUTOTUNE_DEFAULT'] = '0'
 
-    models.download_model_weights()
     MainW(image=image)
     ret = app.exec_()
     sys.exit(ret)
@@ -145,7 +137,7 @@ class MainW(QtGui.QMainWindow):
         self.setWindowTitle("cellpose")
         self.cp_path = os.path.dirname(os.path.realpath(__file__))
         app_icon = QtGui.QIcon()
-        icon_path = pathlib.Path.home().joinpath('.cellpose', 'logo.png')
+        icon_path = pathlib.Path.Path(cellpose.__path__[0]).joinpath('logo', 'logo.png')
         icon_path = str(icon_path.resolve())
         app_icon.addFile(icon_path, QtCore.QSize(16, 16))
         app_icon.addFile(icon_path, QtCore.QSize(24, 24))
@@ -410,7 +402,7 @@ class MainW(QtGui.QMainWindow):
         b+=1
         # choose models
         self.ModelChoose = QtGui.QComboBox()
-        self.model_dir = pathlib.Path.home().joinpath('.cellpose', 'models')
+        self.model_dir = pathlib.Path(cellpose.__path__[0]).joinpath('models')
         models = ['cyto', 'nuclei']
         self.ModelChoose.addItems(models)
         self.ModelChoose.setFixedWidth(70)

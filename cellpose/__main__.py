@@ -116,7 +116,7 @@ def main():
         else:
             device = mx.cpu()
         print('>>>> using %s'%(['CPU', 'GPU'][use_gpu]))
-        model_dir = pathlib.Path.home().joinpath('.cellpose', 'models')              
+        model_dir = pathlib.Path(cellpose.__path__[0]).joinpath('models')              
 
         if not args.train and not args.train_size:
             tic = time.time()

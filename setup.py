@@ -48,6 +48,7 @@ setup(
         ]
     },
     include_package_data=True,
+    package_data={'': ['models/*']},
     classifiers=(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: BSD License",
