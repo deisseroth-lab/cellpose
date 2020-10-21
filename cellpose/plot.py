@@ -5,7 +5,7 @@ from scipy.ndimage import gaussian_filter
 import scipy
 import colorsys
 
-from . import utils, io
+from . import utils
 
 def rgb_to_hsv(arr):
     rgb_to_hsv_channels = np.vectorize(colorsys.rgb_to_hsv)
@@ -86,6 +86,7 @@ def show_segmentation(fig, img, maski, flowi, channels=[0,0], file_name=None):
     ax.axis('off')
 
     if file_name is not None:
+        from . import io
         save_path = os.path.splitext(file_name)[0]
         io.imsave(save_path + '_overlay.jpg', overlay)
         io.imsave(save_path + '_outlines.jpg', imgout)
