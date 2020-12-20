@@ -3,11 +3,14 @@ import numpy as np
 import warnings
 import cv2
 
-def _taper_mask(bsize=224, sig=7.5):
+def _taper_mask(ly=224, lx=224, sig=7.5):
+    bsize = max(224, max(ly, lx))
     xm = np.arange(bsize)
     xm = np.abs(xm - xm.mean())
     mask = 1/(1 + np.exp((xm - (bsize/2-20)) / sig))
     mask = mask * mask[:, np.newaxis]
+    mask = mask[bsize//2-ly//2 : bsize//2+ly//2+ly%2, 
+                bsize//2-lx//2 : bsize//2+lx//2+lx%2]
     return mask
 
 def unaugment_tiles(y, unet=False):
@@ -78,17 +81,17 @@ def average_tiles(y, ysub, xsub, Ly, Lx):
     Navg = np.zeros((Ly,Lx))
     yf = np.zeros((y.shape[1], Ly, Lx), np.float32)
     # taper edges of tiles
-    mask = _taper_mask(bsize=y.shape[-1])
+    mask = _taper_mask(ly=y.shape[-2], lx=y.shape[-1])
     for j in range(len(ysub)):
         yf[:, ysub[j][0]:ysub[j][1],  xsub[j][0]:xsub[j][1]] += y[j] * mask
         Navg[ysub[j][0]:ysub[j][1],  xsub[j][0]:xsub[j][1]] += mask
     yf /= Navg
     return yf
 
-def make_tiles(imgi, bsize=224, augment=True):
+def make_tiles(imgi, bsize=224, augment=False, tile_overlap=0.1):
     """ make tiles of image to run at test-time
 
-    there are 4 versions of tiles
+    if augmented, tiles are flipped and tile_overlap=2.
         * original
         * flipped vertically
         * flipped horizontally
@@ -98,6 +101,15 @@ def make_tiles(imgi, bsize=224, augment=True):
     ----------
     imgi : float32
         array that's nchan x Ly x Lx
+
+    bsize : float (optional, default 224)
+        size of tiles
+
+    augment : bool (optional, default False)
+        flip tiles and set tile_overlap=2.
+
+    tile_overlap: float (optional, default 0.1)
+        fraction of overlap of tiles
 
     Returns
     -------
@@ -110,27 +122,19 @@ def make_tiles(imgi, bsize=224, augment=True):
     xsub : list
         list of arrays with start and end of tiles in X of length ntiles
 
-    Ly : int
-        size of total image pre-tiling in Y (may be larger than original image if
-        image size is less than bsize)
-
-    Lx : int
-        size of total image pre-tiling in X (may be larger than original image if
-        image size is less than bsize)
-
+    
     """
 
-    bsize = np.int32(bsize)
-    nchan, Ly0, Lx0 = imgi.shape
-    # pad if image smaller than bsize
-    if Ly0<bsize:
-        imgi = np.concatenate((imgi, np.zeros((nchan,bsize-Ly0, Lx0))), axis=1)
-        Ly0 = bsize
-    if Lx0<bsize:
-        imgi = np.concatenate((imgi, np.zeros((nchan,Ly0, bsize-Lx0))), axis=2)
-    Ly, Lx = imgi.shape[-2:]
-
+    nchan, Ly, Lx = imgi.shape
     if augment:
+        bsize = np.int32(bsize)
+        # pad if image smaller than bsize
+        if Ly<bsize:
+            imgi = np.concatenate((imgi, np.zeros((nchan, bsize-Ly, Lx))), axis=1)
+            Ly = bsize
+        if Lx<bsize:
+            imgi = np.concatenate((imgi, np.zeros((nchan, Ly, bsize-Lx))), axis=2)
+        Ly, Lx = imgi.shape[-2:]
         # tiles overlap by half of tile size
         ny = max(2, int(np.ceil(2. * Ly / bsize)))
         nx = max(2, int(np.ceil(2. * Lx / bsize)))
@@ -155,19 +159,23 @@ def make_tiles(imgi, bsize=224, augment=True):
                 elif j%2==1 and i%2==1:
                     IMG[j,i] = IMG[j,i,:, ::-1, ::-1]
     else:
+        tile_overlap = min(0.5, max(0.05, tile_overlap))
+        bsizeY, bsizeX = min(bsize, Ly), min(bsize, Lx)
+        bsizeY = np.int32(bsizeY)
+        bsizeX = np.int32(bsizeX)
         # tiles overlap by 10% tile size
-        ny = 1 if Ly<=bsize else int(np.ceil(1.2 * Ly / bsize))
-        nx = 1 if Lx<=bsize else int(np.ceil(1.2 * Lx / bsize))
-        ystart = np.linspace(0, Ly-bsize, ny).astype(int)
-        xstart = np.linspace(0, Lx-bsize, nx).astype(int)
+        ny = 1 if Ly<=bsize else int(np.ceil((1.+2*tile_overlap) * Ly / bsize))
+        nx = 1 if Lx<=bsize else int(np.ceil((1.+2*tile_overlap) * Lx / bsize))
+        ystart = np.linspace(0, Ly-bsizeY, ny).astype(int)
+        xstart = np.linspace(0, Lx-bsizeX, nx).astype(int)
 
         ysub = []
         xsub = []
-        IMG = np.zeros((len(ystart), len(xstart), nchan,  bsize, bsize), np.float32)
+        IMG = np.zeros((len(ystart), len(xstart), nchan,  bsizeY, bsizeX), np.float32)
         for j in range(len(ystart)):
             for i in range(len(xstart)):
-                ysub.append([ystart[j], ystart[j]+bsize])
-                xsub.append([xstart[i], xstart[i]+bsize])
+                ysub.append([ystart[j], ystart[j]+bsizeY])
+                xsub.append([xstart[i], xstart[i]+bsizeX])
                 IMG[j, i] = imgi[:, ysub[-1][0]:ysub[-1][1],  xsub[-1][0]:xsub[-1][1]]
         
     return IMG, ysub, xsub, Ly, Lx
@@ -409,7 +417,7 @@ def resize_image(img0, Ly=None, Lx=None, rsz=None, interpolation=cv2.INTER_LINEA
 
     if Ly is None:
         # determine Ly and Lx using rsz
-        if not isinstance(rsz, list) or not isinstance(rsz, np.ndarray):
+        if not isinstance(rsz, list) and not isinstance(rsz, np.ndarray):
             rsz = [rsz, rsz]
         Ly = int(img0.shape[-3] * rsz[-2])
         Lx = int(img0.shape[-2] * rsz[-1])

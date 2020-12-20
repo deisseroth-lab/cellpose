@@ -21,8 +21,6 @@ except:
 
 try:
     from google.cloud import storage
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                                        'key/cellpose-data-writer.json')
     SERVER_UPLOAD = True
 except:
     SERVER_UPLOAD = False
@@ -79,6 +77,9 @@ def get_image_files(folder, mask_filter, imf=None):
         if igood:
             imn.append(im)
     image_names = imn
+
+    if len(image_names)==0:
+        raise ValueError('ERROR: no images in --dir folder')
     
     return image_names
         
@@ -189,6 +190,9 @@ def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None):
             masks_flows_to_seg(image, mask, flow, diam, file_name, channels_img)
         return
 
+    if len(channels)==1:
+        channels = channels[0]
+
     flowi = []
     if flows[0].ndim==3:
         flowi.append(flows[0][np.newaxis,...])
@@ -206,17 +210,27 @@ def masks_flows_to_seg(images, masks, flows, diams, file_names, channels=None):
         flowi.append(np.concatenate((flows[1], flows[2][np.newaxis,...]), axis=0))
     outlines = masks * utils.masks_to_outlines(masks)
     base = os.path.splitext(file_names)[0]
-    if images.shape[0]<8:
-        np.transpose(images, (1,2,0))
-    np.save(base+ '_seg.npy',
-                {'outlines': outlines.astype(np.uint16),
-                    'masks': masks.astype(np.uint16),
-                    'chan_choose': channels,
-                    'img': images,
-                    'ismanual': np.zeros(masks.max(), np.bool),
-                    'filename': file_names,
-                    'flows': flowi,
-                    'est_diam': diams})
+    if masks.ndim==3:
+        np.save(base+ '_seg.npy',
+                    {'outlines': outlines.astype(np.uint16) if outlines.max()<2**16-1 else outlines.astype(np.uint32),
+                        'masks': masks.astype(np.uint16) if outlines.max()<2**16-1 else masks.astype(np.uint32),
+                        'chan_choose': channels,
+                        'img': images,
+                        'ismanual': np.zeros(masks.max(), np.bool),
+                        'filename': file_names,
+                        'flows': flowi,
+                        'est_diam': diams})
+    else:
+        if images.shape[0]<8:
+            np.transpose(images, (1,2,0))
+        np.save(base+ '_seg.npy',
+                    {'outlines': outlines.astype(np.uint16) if outlines.max()<2**16-1 else outlines.astype(np.uint32),
+                     'masks': masks.astype(np.uint16) if masks.max()<2**16-1 else masks.astype(np.uint32),
+                     'chan_choose': channels,
+                     'ismanual': np.zeros(masks.max(), np.bool),
+                     'filename': file_names,
+                     'flows': flowi,
+                     'est_diam': diams})    
 
 def save_to_png(images, masks, flows, file_names):
     """ deprecated (runs io.save_masks with png=True) 
@@ -261,21 +275,26 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False):
     
     if masks.ndim > 2 and not tif:
         raise ValueError('cannot save 3D outputs as PNG, use tif option instead')
-    print(masks.shape)
     base = os.path.splitext(file_names)[0]
     exts = []
-    if png:
+    if masks.ndim > 2 or masks.max()>2**16-1:
+        png = False
+        tif = True
+    if png:    
         exts.append('.png')
     if tif:
         exts.append('.tif')
+
+    # convert to uint16 if possible so can save as PNG if needed
+    masks = masks.astype(np.uint16) if masks.max()<2**16-1 else masks.astype(np.uint32)
     
     # save masks
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for ext in exts:
-            imsave(base + '_cp_masks' + ext, masks.astype(np.uint16))
+            imsave(base + '_cp_masks' + ext, masks)
 
-    if png and MATPLOTLIB and not (images.ndim==3 and min(images.shape)>3):
+    if png and MATPLOTLIB and not min(images.shape) > 3:
         img = images.copy()
         if img.ndim<3:
             img = img[:,:,np.newaxis]
@@ -318,6 +337,8 @@ def save_server(parent=None, filename=None):
             filename = parent.filename
 
     if filename is not None:
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                        'key/cellpose-data-writer.json')
         bucket_name = 'cellpose_data'
         base = os.path.splitext(filename)[0]
         source_file_name = base + '_seg.npy'
@@ -538,7 +559,7 @@ def _load_seg(parent, filename=None, image=None, image_file=None):
             parent.cellpix = dat['masks']
             parent.outpix = dat['outlines']
             parent.cellcolors.extend(colors)
-            parent.ncells = np.uint16(parent.cellpix.max())
+            parent.ncells = parent.cellpix.max()
             parent.draw_masks()
             if 'est_diam' in dat:
                 parent.Diameter.setText('%0.1f'%dat['est_diam'])
@@ -627,13 +648,15 @@ def _masks_to_gui(parent, masks, outlines=None):
     shape = masks.shape
     _, masks = np.unique(masks, return_inverse=True)
     masks = np.reshape(masks, shape)
-    parent.cellpix = masks.astype(np.uint16)
+    masks = masks.astype(np.uint16) if masks.max()<2**16-1 else masks.astype(np.uint32)
+    parent.cellpix = masks
+
     # get outlines
     if outlines is None:
-        parent.outpix = np.zeros(masks.shape, np.uint16)
+        parent.outpix = np.zeros_like(masks)
         for z in range(parent.NZ):
             outlines = utils.masks_to_outlines(masks[z])
-            parent.outpix[z] = ((outlines * masks[z])).astype(np.uint16)
+            parent.outpix[z] = outlines * masks[z]
             if z%50==0:
                 print('plane %d outlines processed'%z)
     else:
@@ -642,7 +665,7 @@ def _masks_to_gui(parent, masks, outlines=None):
         _,parent.outpix = np.unique(parent.outpix, return_inverse=True)
         parent.outpix = np.reshape(parent.outpix, shape)
 
-    parent.ncells = np.uint16(parent.cellpix.max())
+    parent.ncells = parent.cellpix.max()
     colors = parent.colormap[np.random.randint(0,1000,size=parent.ncells), :3]
     parent.cellcolors = list(np.concatenate((np.array([[255,255,255]]), colors), axis=0).astype(np.uint8))
     parent.draw_masks()
