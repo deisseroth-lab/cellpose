@@ -7,7 +7,7 @@ import cv2
 
 import logging
 models_logger = logging.getLogger(__name__)
-models_logger.setLevel(logging.DEBUG)
+# models_logger.setLevel(logging.DEBUG)
 
 
 from . import transforms, dynamics, utils, plot, metrics, core
